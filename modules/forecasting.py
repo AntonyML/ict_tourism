@@ -36,8 +36,10 @@ def moving_average(series: ArrayLike, window: int) -> NDArray[np.float64]:
 def simple_exponential_smoothing(series: ArrayLike, alpha: float) -> Any:
     """Ajusta Simple Exponential Smoothing con statsmodels."""
     values = np.asarray(series, dtype=float)
+    if not 0 < alpha <= 1:
+        raise ValueError("alpha debe estar entre 0 y 1.")
     model = SimpleExpSmoothing(values, initialization_method="estimated")
-    return model.fit(smoothing_level=alpha, optimized=True)
+    return model.fit(smoothing_level=alpha, optimized=False)
 
 
 def holt_trend(series: ArrayLike) -> Any:
@@ -69,7 +71,11 @@ def compare_models(
 ) -> ForecastingResult:
     """Compara MA, SES y Holt, y crea la figura del mejor modelo."""
     horizon = horizon_years or list(range(2025, 2031))
-    train_df = total_df[(total_df["Año"] >= start_year) & (total_df["Año"] <= 2024)].copy()
+    clean_df = total_df.reset_index(drop=True)[["Año", "Total"]].copy()
+    clean_df["Año"] = pd.to_numeric(clean_df["Año"], errors="coerce")
+    clean_df["Total"] = pd.to_numeric(clean_df["Total"], errors="coerce")
+    clean_df = clean_df.dropna(subset=["Año", "Total"]).sort_values("Año")
+    train_df = clean_df[(clean_df["Año"] >= start_year) & (clean_df["Año"] <= 2024)].copy()
     if exclude_2020:
         train_df = train_df[train_df["Año"] != 2020]
     if len(train_df) < 6:
@@ -112,8 +118,8 @@ def compare_models(
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
-            x=total_df["Año"],
-            y=total_df["Total"],
+            x=clean_df["Año"],
+            y=clean_df["Total"],
             mode="lines+markers",
             name="Histórico completo",
             line=dict(color="#334155", width=2),
@@ -156,7 +162,9 @@ def compare_models(
         )
 
     fig.add_vline(x=2020, line_dash="dash", line_color="#dc2626")
-    fig.add_annotation(x=2020, y=float(total_df.loc[2020, "Total"]) if 2020 in total_df.index else None, text="2020", showarrow=True)
+    if 2020 in clean_df["Año"].values:
+        y_2020 = float(clean_df.loc[clean_df["Año"] == 2020, "Total"].iloc[0])
+        fig.add_annotation(x=2020, y=y_2020, text="2020", showarrow=True)
     fig.update_layout(
         title=f"Mejor modelo por RMSE: {best_model}",
         xaxis_title="Año",

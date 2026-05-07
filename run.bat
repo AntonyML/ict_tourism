@@ -30,7 +30,12 @@ if exist requirements.txt (
     echo No se encontró requirements.txt, omitiendo instalacion de dependencias.
 )
 
-echo Arrancando Streamlit (presiona CTRL+C para detener)...
-streamlit run app.py
+echo Liberando puerto 8501 si existe una instancia anterior de Streamlit...
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8501" ^| findstr "LISTENING"') do (
+    taskkill /PID %%a /F >nul 2>&1
+)
+
+echo Arrancando Streamlit en http://localhost:8501 ...
+python -m streamlit run app.py --server.port 8501 --server.address localhost --server.headless true
 
 endlocal

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
+
 import pandas as pd
 import streamlit as st
 
@@ -13,7 +16,10 @@ from modules.optimization import render_optimization_module
 from modules.spc import render_spc_module
 
 
-st.set_page_config(page_title="ICT Tourism Analytics", page_icon="📈", layout="wide")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
+LOGGER = logging.getLogger("ict_tourism")
+
+st.set_page_config(page_title="ICT Tourism Analytics", page_icon=":chart_with_upwards_trend:", layout="wide")
 
 
 @st.cache_data(show_spinner=False)
@@ -27,6 +33,15 @@ def load_data() -> dict[str, pd.DataFrame]:
         "variation": DataLoader.load_annual_variation(),
         "growth": DataLoader.load_growth_rates(),
     }
+
+
+def render_section(section: Callable[[dict[str, pd.DataFrame]], None], data: dict[str, pd.DataFrame]) -> None:
+    """Ejecuta cada sección con un límite de error amigable."""
+    try:
+        section(data)
+    except Exception as exc:
+        LOGGER.exception("Error al renderizar sección")
+        st.error(f"No fue posible renderizar este módulo: {exc}")
 
 
 def show_descriptive(data: dict[str, pd.DataFrame]) -> None:
@@ -49,14 +64,16 @@ def show_forecasting(data: dict[str, pd.DataFrame]) -> None:
             min_value=int(config["start_year_min"]),
             max_value=int(config["start_year_max"]),
             value=int(config["start_year_default"]),
+            key="forecast_start_year",
         )
     with col_b:
-        exclude_2020 = st.checkbox("Excluir 2020 del entrenamiento", value=False)
+        exclude_2020 = st.checkbox("Excluir 2020 del entrenamiento", value=False, key="forecast_exclude_2020")
 
     st.caption("El entrenamiento usa los datos desde el año seleccionado hasta 2024. El horizonte fijo es 2025-2030.")
-    if st.button("Comparar modelos", type="primary"):
+    if st.button("Comparar modelos", type="primary", key="forecast_compare_models"):
         try:
-            result = compare_models(data["total"], start_year=start_year, exclude_2020=exclude_2020)
+            with st.spinner("Ajustando modelos de pronóstico..."):
+                result = compare_models(data["total"], start_year=start_year, exclude_2020=exclude_2020)
             st.subheader("Tabla comparativa de métricas")
             st.dataframe(result.metrics, use_container_width=True, hide_index=True)
             st.success(f"Mejor modelo por RMSE: {result.best_model}")
@@ -68,7 +85,7 @@ def show_forecasting(data: dict[str, pd.DataFrame]) -> None:
 def show_spc(data: dict[str, pd.DataFrame]) -> None:
     """Renderiza el módulo de control estadístico."""
     st.header("Control estadístico de procesos")
-    exclude_2020 = st.toggle("Excluir 2020", value=False)
+    exclude_2020 = st.toggle("Excluir 2020", value=False, key="spc_exclude_2020")
     result = render_spc_module(data["variation"], exclude_2020=exclude_2020)
     st.plotly_chart(result["figure"], use_container_width=True)
     col_a, col_b, col_c = st.columns(3)
@@ -81,10 +98,18 @@ def show_spc(data: dict[str, pd.DataFrame]) -> None:
 def show_montecarlo(data: dict[str, pd.DataFrame]) -> None:
     """Renderiza simulación Monte Carlo."""
     st.header("Simulación Monte Carlo")
-    n_simulations = st.slider("Número de simulaciones", 1_000, 50_000, 10_000, step=1_000)
-    if st.button("Ejecutar simulación", type="primary"):
+    n_simulations = st.slider(
+        "Número de simulaciones",
+        1_000,
+        50_000,
+        10_000,
+        step=1_000,
+        key="montecarlo_n_simulations",
+    )
+    if st.button("Ejecutar simulación", type="primary", key="montecarlo_run"):
         try:
-            result = render_montecarlo_module(data["growth"], data["total"], n_simulations=n_simulations)
+            with st.spinner("Ejecutando simulaciones..."):
+                result = render_montecarlo_module(data["growth"], data["total"], n_simulations=n_simulations)
             st.success(f"Distribución seleccionada por AIC: {result['distribution'].name}")
             st.plotly_chart(result["histogram"], use_container_width=True)
             st.plotly_chart(result["fan_chart"], use_container_width=True)
@@ -104,10 +129,12 @@ def show_optimization(data: dict[str, pd.DataFrame]) -> None:
         value=10_000_000.0,
         step=100_000.0,
         format="%.2f",
+        key="optimization_budget",
     )
-    if st.button("Optimizar", type="primary"):
+    if st.button("Optimizar", type="primary", key="optimization_run"):
         try:
-            result = render_optimization_module(data["zone3"], data["zone4"], budget=budget)
+            with st.spinner("Resolviendo modelo lineal..."):
+                result = render_optimization_module(data["zone3"], data["zone4"], budget=budget)
             st.success(f"Estado del modelo: {result.status}")
             st.dataframe(result.allocation_table, use_container_width=True, hide_index=True)
             st.plotly_chart(result.figure, use_container_width=True)
@@ -151,18 +178,19 @@ def main() -> None:
             "Simulación Monte Carlo",
             "Programación Lineal",
         ],
+        key="main_navigation",
     )
 
     if option == "Dashboard descriptivo":
-        show_descriptive(data)
+        render_section(show_descriptive, data)
     elif option == "Pronósticos":
-        show_forecasting(data)
+        render_section(show_forecasting, data)
     elif option == "Control estadístico de procesos":
-        show_spc(data)
+        render_section(show_spc, data)
     elif option == "Simulación Monte Carlo":
-        show_montecarlo(data)
+        render_section(show_montecarlo, data)
     elif option == "Programación Lineal":
-        show_optimization(data)
+        render_section(show_optimization, data)
 
 
 if __name__ == "__main__":
