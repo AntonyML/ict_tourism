@@ -65,7 +65,7 @@ def render_section(section: Callable[[dict[str, pd.DataFrame]], None], data: dic
 def show_descriptive(data: dict[str, pd.DataFrame]) -> None:
     """Renderiza el dashboard descriptivo."""
     st.header("Dashboard descriptivo")
-    with st.expander("ℹ️ Limitaciones de este módulo"):
+    with st.expander("  Limitaciones de este módulo"):
         st.markdown(render_limitations("descriptive"))
     dashboard = render_dashboard(data["total"], data["air"], data["zone3"])
     for chart in dashboard["charts"]:
@@ -76,9 +76,9 @@ def show_descriptive(data: dict[str, pd.DataFrame]) -> None:
 def show_forecasting(data: dict[str, pd.DataFrame]) -> None:
     """Renderiza controles y resultados de pronóstico."""
     st.header("Pronósticos")
-    with st.expander("ℹ️ Limitaciones de este módulo"):
+    with st.expander("  Limitaciones de este módulo"):
         st.markdown(render_limitations("forecasting"))
-    with st.expander("📋 Parámetros utilizados"):
+    with st.expander("   Parámetros utilizados"):
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown("**Promedio móvil**")
@@ -123,7 +123,7 @@ def show_forecasting(data: dict[str, pd.DataFrame]) -> None:
 def show_spc(data: dict[str, pd.DataFrame]) -> None:
     """Renderiza el módulo de control estadístico."""
     st.header("Control estadístico de procesos")
-    with st.expander("ℹ️ Limitaciones de este módulo"):
+    with st.expander("  Limitaciones de este módulo"):
         st.markdown(render_limitations("spc"))
     exclude_2020 = st.toggle("Excluir 2020 del cálculo de límites", value=False, key="spc_exclude_2020")
     st.caption("Excluir 2020 produce límites más representativos de la variabilidad normal del sector, sin el choque pandémico.")
@@ -141,7 +141,7 @@ def show_spc(data: dict[str, pd.DataFrame]) -> None:
 def show_montecarlo(data: dict[str, pd.DataFrame]) -> None:
     """Renderiza simulación Monte Carlo."""
     st.header("Simulación Monte Carlo")
-    with st.expander("ℹ️ Limitaciones de este módulo"):
+    with st.expander("  Limitaciones de este módulo"):
         st.markdown(render_limitations("montecarlo"))
     n_simulations = st.slider(
         "Número de simulaciones",
@@ -172,7 +172,7 @@ def show_montecarlo(data: dict[str, pd.DataFrame]) -> None:
 def show_optimization(data: dict[str, pd.DataFrame]) -> None:
     """Renderiza programación lineal de presupuesto."""
     st.header("Programación Lineal")
-    with st.expander("ℹ️ Limitaciones de este módulo"):
+    with st.expander("  Limitaciones de este módulo"):
         st.markdown(render_limitations("optimization"))
     with st.expander("📐 Supuestos del modelo"):
         st.markdown(
