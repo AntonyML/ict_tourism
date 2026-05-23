@@ -6,19 +6,39 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
+from modules.constants import SPC_D2
+
 
 def compute_i_chart_limits(data: pd.DataFrame | pd.Series, exclude_2020: bool = False) -> dict[str, float]:
-    """Calcula media, LCS y LCI usando tres desviaciones estándar globales."""
+    """Calcula media, LCS y LCI mediante rango móvil promedio (método I-Chart estándar).
+
+    El I-Chart estima sigma a través del rango móvil promedio dividido por
+    la constante d2 (d2=1.128 para n=2). Este estimador captura la variabilidad
+    proceso a proceso en lugar de la variabilidad global de la serie, produciendo
+    límites de control más precisos para detectar causas especiales.
+
+    Referencia: Montgomery, D. C. (2020). Introduction to statistical quality
+    control (8th ed.). Wiley.
+    """
     if isinstance(data, pd.DataFrame):
         values_df = data[["Año", "Var %"]].copy()
     else:
         values_df = data.rename("Var %").reset_index().rename(columns={"index": "Año"})
     if exclude_2020:
         values_df = values_df[values_df["Año"] != 2020]
-    values = values_df["Var %"].astype(float).dropna()
+    values = values_df["Var %"].astype(float).dropna().to_numpy()
     mean = float(values.mean())
-    sigma = float(values.std(ddof=1))
-    return {"LCS": mean + 3 * sigma, "LC": mean, "LCI": mean - 3 * sigma, "Sigma": sigma}
+    # Sigma estimado por rango móvil promedio: σ̂ = MR̄ / d2
+    moving_ranges = np.abs(np.diff(values))
+    mr_bar = float(np.mean(moving_ranges))
+    sigma = mr_bar / SPC_D2
+    return {
+        "LCS": mean + 3 * sigma,
+        "LC": mean,
+        "LCI": mean - 3 * sigma,
+        "Sigma": sigma,
+        "MR_bar": mr_bar,
+    }
 
 
 def plot_i_chart(data: pd.DataFrame, limits: dict[str, float], title: str) -> go.Figure:

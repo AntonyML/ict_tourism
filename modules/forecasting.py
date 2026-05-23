@@ -11,6 +11,8 @@ import plotly.graph_objects as go
 from numpy.typing import ArrayLike, NDArray
 from statsmodels.tsa.holtwinters import Holt, SimpleExpSmoothing
 
+from modules.constants import FORECAST_ALPHA, FORECAST_HORIZON, FORECAST_MA_WINDOW
+
 
 @dataclass
 class ForecastingResult:
@@ -21,7 +23,7 @@ class ForecastingResult:
     figure: go.Figure
 
 
-def moving_average(series: ArrayLike, window: int) -> NDArray[np.float64]:
+def moving_average(series: ArrayLike, window: int = FORECAST_MA_WINDOW) -> NDArray[np.float64]:
     """Calcula pronósticos de promedio móvil no centrado alineados con la serie."""
     values = np.asarray(series, dtype=float)
     if window <= 0:
@@ -33,8 +35,12 @@ def moving_average(series: ArrayLike, window: int) -> NDArray[np.float64]:
     return np.concatenate([np.full(window - 1, np.nan), valid])
 
 
-def simple_exponential_smoothing(series: ArrayLike, alpha: float) -> Any:
-    """Ajusta Simple Exponential Smoothing con statsmodels."""
+def simple_exponential_smoothing(series: ArrayLike, alpha: float = FORECAST_ALPHA) -> Any:
+    """Ajusta Simple Exponential Smoothing con statsmodels.
+
+    El parámetro alpha se fija en FORECAST_ALPHA (ver constants.py) para
+    comparar los tres modelos bajo condiciones controladas de parámetro.
+    """
     values = np.asarray(series, dtype=float)
     if not 0 < alpha <= 1:
         raise ValueError("alpha debe estar entre 0 y 1.")
@@ -70,7 +76,7 @@ def compare_models(
     horizon_years: list[int] | None = None,
 ) -> ForecastingResult:
     """Compara MA, SES y Holt, y crea la figura del mejor modelo."""
-    horizon = horizon_years or list(range(2025, 2031))
+    horizon = horizon_years or FORECAST_HORIZON
     clean_df = total_df.reset_index(drop=True)[["Año", "Total"]].copy()
     clean_df["Año"] = pd.to_numeric(clean_df["Año"], errors="coerce")
     clean_df["Total"] = pd.to_numeric(clean_df["Total"], errors="coerce")
@@ -84,8 +90,8 @@ def compare_models(
     y_train = train_df["Total"].astype(float).to_numpy()
     years_train = train_df["Año"].astype(int).to_numpy()
 
-    ma_pred = moving_average(y_train, window=3)
-    ses_fit = simple_exponential_smoothing(y_train, alpha=0.3)
+    ma_pred = moving_average(y_train)
+    ses_fit = simple_exponential_smoothing(y_train)
     ses_pred = np.asarray(ses_fit.fittedvalues, dtype=float)
     holt_fit = holt_trend(y_train)
     holt_pred = np.asarray(holt_fit.fittedvalues, dtype=float)
@@ -100,20 +106,33 @@ def compare_models(
     )
     best_model = str(metrics_df.sort_values("RMSE").iloc[0]["Modelo"])
 
+    # Calcular residuos para estimar banda de confianza según el modelo ganador
     if best_model == "Promedio móvil":
-        last_window = y_train[-3:].copy()
-        future = []
+        valid_mask = ~np.isnan(ma_pred)
+        residuals = y_train[valid_mask] - ma_pred[valid_mask]
+        last_window = y_train[-FORECAST_MA_WINDOW:].copy()
+        future_list: list[float] = []
         for _ in horizon:
-            next_value = float(np.mean(last_window))
-            future.append(next_value)
-            last_window = np.append(last_window[1:], next_value)
+            nv = float(np.mean(last_window))
+            future_list.append(nv)
+            last_window = np.append(last_window[1:], nv)
+        future = np.asarray(future_list, dtype=float)
         best_in_sample = ma_pred
+
     elif best_model == "Suavizamiento exponencial simple":
+        residuals = y_train - ses_pred
         future = np.asarray(ses_fit.forecast(len(horizon)), dtype=float)
         best_in_sample = ses_pred
-    else:
+
+    else:  # Holt tendencia
+        residuals = y_train - holt_pred
         future = np.asarray(holt_fit.forecast(len(horizon)), dtype=float)
         best_in_sample = holt_pred
+
+    # Banda de confianza ~95% para TODOS los modelos (basada en residuos históricos)
+    residual_std = float(np.nanstd(residuals))
+    upper = future + 1.96 * residual_std
+    lower = future - 1.96 * residual_std
 
     fig = go.Figure()
     fig.add_trace(
@@ -143,23 +162,19 @@ def compare_models(
             line=dict(color="#16a34a", width=3, dash="dash"),
         )
     )
-
-    if best_model == "Holt tendencia":
-        residual_std = float(np.nanstd(y_train - best_in_sample))
-        upper = np.asarray(future) + 1.96 * residual_std
-        lower = np.asarray(future) - 1.96 * residual_std
-        fig.add_trace(go.Scatter(x=horizon, y=upper, mode="lines", line=dict(width=0), showlegend=False))
-        fig.add_trace(
-            go.Scatter(
-                x=horizon,
-                y=lower,
-                mode="lines",
-                fill="tonexty",
-                fillcolor="rgba(22, 163, 74, 0.18)",
-                line=dict(width=0),
-                name="Banda aproximada 95%",
-            )
+    # Banda de confianza para todos los modelos
+    fig.add_trace(go.Scatter(x=horizon, y=upper, mode="lines", line=dict(width=0), showlegend=False))
+    fig.add_trace(
+        go.Scatter(
+            x=horizon,
+            y=lower,
+            mode="lines",
+            fill="tonexty",
+            fillcolor="rgba(22, 163, 74, 0.18)",
+            line=dict(width=0),
+            name="Banda aprox. 95%",
         )
+    )
 
     fig.add_vline(x=2020, line_dash="dash", line_color="#dc2626")
     if 2020 in clean_df["Año"].values:

@@ -10,6 +10,14 @@ import pandas as pd
 import plotly.graph_objects as go
 from scipy import stats
 
+from modules.constants import (
+    MONTECARLO_GROWTH_CLIP,
+    MONTECARLO_N_YEARS,
+    MONTECARLO_PROJECTION_START,
+    MONTECARLO_RANDOM_SEED,
+    POST_PANDEMIC_YEAR_START,
+)
+
 
 @dataclass
 class FittedDistribution:
@@ -30,7 +38,16 @@ class FittedDistribution:
 
 
 def fit_distribution(growth_series: pd.Series) -> FittedDistribution:
-    """Ajusta normal, logística y cauchy, eligiendo la menor AIC."""
+    """Ajusta normal, logística y cauchy, eligiendo la menor AIC.
+
+    Nota metodológica: el ajuste utiliza únicamente las tasas de crecimiento
+    del periodo post-pandemia (desde POST_PANDEMIC_YEAR_START). Esto limita
+    el número de observaciones disponibles (típicamente 3-4 datos), lo que
+    introduce fragilidad estadística en el ajuste. Esta limitación es
+    reconocida explícitamente: se prefiere este periodo por ser el más
+    representativo de la dinámica turística post-COVID, base más plausible
+    para proyectar 2026-2030.
+    """
     values = pd.to_numeric(growth_series, errors="coerce").dropna().astype(float).to_numpy()
     if len(values) < 2:
         raise ValueError("Se requieren al menos dos tasas de crecimiento para ajustar una distribución.")
@@ -49,20 +66,24 @@ def fit_distribution(growth_series: pd.Series) -> FittedDistribution:
 def simulate(
     dist_fitted: FittedDistribution,
     n_simulations: int,
-    n_years: int = 5,
+    n_years: int = MONTECARLO_N_YEARS,
     current_total: float = 0.0,
 ) -> pd.DataFrame:
-    """Genera caminos estocásticos de llegadas para 2026-2030."""
+    """Genera caminos estocásticos de llegadas para 2026-2030.
+
+    Las tasas simuladas se recortan en MONTECARLO_GROWTH_CLIP para evitar
+    escenarios implausibles (caídas >95% o crecimientos >200%).
+    """
     if current_total <= 0:
         raise ValueError("current_total debe ser mayor que cero.")
-    sampled_rates = dist_fitted.rvs(size=(n_simulations, n_years), random_state=42)
-    sampled_rates = np.clip(sampled_rates, -0.95, 2.0)
+    sampled_rates = dist_fitted.rvs(size=(n_simulations, n_years), random_state=MONTECARLO_RANDOM_SEED)
+    sampled_rates = np.clip(sampled_rates, *MONTECARLO_GROWTH_CLIP)
     totals = np.empty_like(sampled_rates, dtype=float)
     previous = np.full(n_simulations, current_total, dtype=float)
     for column in range(n_years):
         previous = previous * (1 + sampled_rates[:, column])
         totals[:, column] = previous
-    years = list(range(2026, 2026 + n_years))
+    years = list(range(MONTECARLO_PROJECTION_START, MONTECARLO_PROJECTION_START + n_years))
     return pd.DataFrame(totals, columns=years)
 
 
@@ -113,7 +134,13 @@ def create_growth_histogram(growth_rates: np.ndarray, dist_fitted: FittedDistrib
         go.Histogram(x=values, histnorm="probability density", nbinsx=50, name="Tasas simuladas", marker_color="#0f766e")
     )
     fig.add_trace(
-        go.Scatter(x=x_grid, y=dist_fitted.pdf(x_grid), mode="lines", name=f"Distribución {dist_fitted.name}", line=dict(color="#dc2626", width=2))
+        go.Scatter(
+            x=x_grid,
+            y=dist_fitted.pdf(x_grid),
+            mode="lines",
+            name=f"Distribución {dist_fitted.name}",
+            line=dict(color="#dc2626", width=2),
+        )
     )
     fig.update_layout(
         title="Distribución de tasas de crecimiento simuladas",
@@ -125,11 +152,19 @@ def create_growth_histogram(growth_rates: np.ndarray, dist_fitted: FittedDistrib
 
 
 def render_montecarlo_module(growth_df: pd.DataFrame, total_df: pd.DataFrame, n_simulations: int) -> dict[str, object]:
-    """Ejecuta ajuste y simulación, devolviendo figuras y tabla resumen."""
-    growth_clean = growth_df[(growth_df["Año"] > 2021) & (growth_df["Año"] != 2020)]["Crecimiento"]
+    """Ejecuta ajuste y simulación, devolviendo figuras y tabla resumen.
+
+    Limitación reconocida: el ajuste de distribución usa únicamente las tasas
+    de crecimiento desde POST_PANDEMIC_YEAR_START (excluyendo 2020 y 2021)
+    para reflejar la dinámica turística post-COVID. Esto implica trabajar con
+    un conjunto reducido de observaciones para el ajuste distribucional.
+    """
+    growth_clean = growth_df[
+        (growth_df["Año"] >= POST_PANDEMIC_YEAR_START) & (growth_df["Año"] != 2020)
+    ]["Crecimiento"]
     fitted = fit_distribution(growth_clean)
     current_total = float(total_df.loc[2025, "Total"] if 2025 in total_df.index else total_df.iloc[-1]["Total"])
-    simulations = simulate(fitted, n_simulations=n_simulations, n_years=5, current_total=current_total)
+    simulations = simulate(fitted, n_simulations=n_simulations, n_years=MONTECARLO_N_YEARS, current_total=current_total)
     rates = simulations.pct_change(axis=1)
     rates.iloc[:, 0] = simulations.iloc[:, 0] / current_total - 1
     summary = simulations.quantile([0.10, 0.50, 0.90]).T.reset_index()

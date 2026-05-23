@@ -9,6 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import pulp
 
+from modules.constants import CAPACITY_MINIMUM, CAPACITY_SCALE_FACTOR
 from modules.data_loader import DataLoader
 
 
@@ -32,13 +33,20 @@ def _normalize_shares(zone_df_share: pd.DataFrame) -> pd.DataFrame:
 
 
 def _capacity_from_history(zone_df_actual: pd.DataFrame) -> dict[str, float]:
+    """Calcula capacidad máxima por zona usando factor de escala de constants.py.
+
+    Capacidad = últimas llegadas × máximo crecimiento histórico × CAPACITY_SCALE_FACTOR
+    Mínimo garantizado = últimas llegadas × CAPACITY_MINIMUM
+
+    Ver constants.py para justificación de CAPACITY_SCALE_FACTOR = 1.2.
+    """
     capacities: dict[str, float] = {}
     for zone in DataLoader.ZONE_COLUMNS:
         series = zone_df_actual[zone].astype(float)
         latest = float(zone_df_actual.loc[2025, zone] if 2025 in zone_df_actual.index else series.iloc[-1])
         pct_growth = series.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
         max_growth = max(float(pct_growth.max()) if not pct_growth.empty else 0.0, 0.05)
-        capacities[zone] = max(latest * max_growth * 1.2, latest * 0.02)
+        capacities[zone] = max(latest * max_growth * CAPACITY_SCALE_FACTOR, latest * CAPACITY_MINIMUM)
     return capacities
 
 
@@ -75,6 +83,38 @@ def build_and_solve_lp(
     return solution, optimal_value, shadow_prices
 
 
+def sensitivity_analysis(
+    zone_df_actual: pd.DataFrame,
+    zone_df_share: pd.DataFrame,
+    base_budget: float,
+    variations_pct: list[float] | None = None,
+) -> pd.DataFrame:
+    """Análisis de sensibilidad: cómo varía Z ante cambios en el presupuesto.
+
+    Calcula el valor óptimo (Z) para distintos niveles de presupuesto
+    (±10%, ±5% y 0% respecto al presupuesto base).
+
+    El precio sombra de cada fila indica el incremento marginal de Z
+    por unidad adicional de presupuesto en ese nivel.
+    """
+    if variations_pct is None:
+        variations_pct = [-10.0, -5.0, 0.0, 5.0, 10.0]
+
+    rows: list[dict[str, object]] = []
+    for pct in variations_pct:
+        adjusted = base_budget * (1 + pct / 100.0)
+        _, opt_value, sp = build_and_solve_lp(zone_df_actual, zone_df_share, adjusted)
+        rows.append(
+            {
+                "Cambio presupuesto": f"{pct:+.1f}%",
+                "Presupuesto": round(adjusted, 2),
+                "Valor objetivo (Z)": round(opt_value, 6),
+                "Precio sombra": round(sp.get("Presupuesto", 0.0), 8),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def render_optimization_module(zone3_df: pd.DataFrame, zone4_df: pd.DataFrame, budget: float) -> OptimizationResult:
     """Resuelve el modelo y devuelve objetos listos para presentación."""
     solution, optimal_value, shadow_prices = build_and_solve_lp(zone3_df, zone4_df, budget)
@@ -84,8 +124,8 @@ def render_optimization_module(zone3_df: pd.DataFrame, zone4_df: pd.DataFrame, b
         {
             "Zona": list(solution.keys()),
             "Asignación óptima": list(solution.values()),
-            "Eficiencia": [efficiencies[zone] for zone in solution],
-            "Capacidad estimada": [capacities[zone] for zone in solution],
+            "Eficiencia (eᵢ)": [round(efficiencies[zone], 4) for zone in solution],
+            "Capacidad estimada (Cᵢ)": [round(capacities[zone], 0) for zone in solution],
         }
     )
     fig = go.Figure(
