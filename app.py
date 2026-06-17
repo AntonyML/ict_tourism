@@ -21,7 +21,7 @@ from modules.spc import render_spc_module
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
 LOGGER = logging.getLogger("ict_tourism")
 
-st.set_page_config(page_title="ICT Tourism Analytics", page_icon=":chart_with_upwards_trend:", layout="wide")
+st.set_page_config(page_title="ICT Tourism Analytics", page_icon=":material/analytics:", layout="wide")
 
 
 @st.cache_data(show_spinner=False)
